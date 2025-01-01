@@ -133,30 +133,36 @@ pintos_init (void)
     /* Run actions specified on kernel command line. */
     run_actions (argv);
   } else {
-    static char* buffer[1024];
+    static char buffer[1024];
     static int index=0;
     console_init();
     input_init();
     memset(buffer, 0, 1024);
+    printf("PKUOS> ");
     while(true){
-      printf("PKUOS> ");
       char c = input_getc();
       if(c == '\n'||c=='\r'){
         buffer[index] = '\0';
         printf("\n");
         if(strcmp(buffer, "exit") == 0){
+          printf("Exiting...\n");
           break;
         }
         else if(strcmp(buffer,"whoami")==0){
           printf("2201412077\n");
+          index=0;
+          memset(buffer, 0, 1024);
+          printf("PKUOS> ");
         }
         else{
           printf("Unknown command: %s\n", buffer);
+          memset(buffer, 0, 1024);
+          index = 0;
+          printf("PKUOS> ");
         }
-        memset(buffer, 0, 1024);
-        index = 0;
       } else {
         buffer[index] = c;
+        printf("%c", c);
         index++;
       }
     }
