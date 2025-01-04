@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "lib/kernel/list.h"
   
 /** See [8254] for hardware details of the 8254 timer chip. */
 
@@ -16,6 +17,14 @@
 #if TIMER_FREQ > 1000
 #error TIMER_FREQ <= 1000 recommended
 #endif
+/** sleeping thread struct */
+struct sleep_thread{
+  struct thread*t;//waiting thread
+  int64_t wake_up_time;//awaketime
+  struct list_elem elem;// list elements
+};
+
+static struct list sleeping_threads_list;//list of sleeping threads
 
 /** Number of timer ticks since OS booted. */
 static int64_t ticks;
@@ -30,6 +39,18 @@ static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 
+/**
+ * @brief Initializes the list of sleeping threads.
+ *
+ * This function initializes the global list that keeps track of threads
+ * that are currently sleeping. It should be called during the system
+ * initialization to ensure that the list is properly set up before any
+ * threads attempt to use it.
+ */
+void time_list_init(void){
+  list_init(&sleeping_threads_list);
+}
+
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
@@ -37,6 +58,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  time_list_init();
 }
 
 /** Calibrates loops_per_tick, used to implement brief delays. */
@@ -66,6 +88,24 @@ timer_calibrate (void)
   printf ("%'"PRIu64" loops/s.\n", (uint64_t) loops_per_tick * TIMER_FREQ);
 }
 
+/**
+ * @brief Compares the wake-up times of two sleeping threads.
+ *
+ * This function is used as a comparator for sorting a list of sleeping threads.
+ * It compares the wake-up times of two threads and returns true if the first
+ * thread's wake-up time is less than the second thread's wake-up time.
+ *
+ * @param a Pointer to the first list element.
+ * @param b Pointer to the second list element.
+ * @param aux UNUSED parameter.
+ * @return true if the wake-up time of the first thread is less than the wake-up time of the second thread, false otherwise.
+ */
+bool sleep_thread_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+    const struct sleep_thread *st_a = list_entry(a, struct sleep_thread, elem);
+    const struct sleep_thread *st_b = list_entry(b, struct sleep_thread, elem);
+    return st_a->wake_up_time < st_b->wake_up_time;
+}
+
 /** Returns the number of timer ticks since the OS booted. */
 int64_t
 timer_ticks (void) 
@@ -88,12 +128,21 @@ timer_elapsed (int64_t then)
    be turned on. */
 void
 timer_sleep (int64_t ticks) 
-{
-  int64_t start = timer_ticks ();
+{ 
+  int64_t start = timer_ticks ();//get the current time
+  int64_t wake_up_time = start + ticks;//calculate the wake up time
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  struct sleep_thread st;
+  st.t = thread_current();//get the current thread
+  st.wake_up_time = wake_up_time;//set the wake up time
+
+  enum intr_level old_level = intr_disable ();
+  list_insert_ordered(&sleeping_threads_list,&st.elem,(list_less_func *) sleep_thread_less,NULL);//insert the thread in the list
+  thread_block();//block the thread
+  intr_set_level (old_level);
+  //while (timer_elapsed (start) < ticks) 
+  //  thread_yield ();
 }
 
 /** Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -172,6 +221,16 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  while (!list_empty(&sleeping_threads_list)){
+    struct list_elem *e = list_front(&sleeping_threads_list);//get the first element
+    struct sleep_thread *st = list_entry(e, struct sleep_thread, elem);//get the thread
+    if(st->wake_up_time <= ticks){//check if the thread should wake up
+      list_pop_front(&sleeping_threads_list);//remove the thread from the list
+      thread_unblock(st->t);//unblock the thread
+    }else{
+      break;//break the loop
+    }
+  }
 }
 
 /** Returns true if LOOPS iterations waits for more than one timer
