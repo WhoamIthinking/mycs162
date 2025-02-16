@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/point_cal.h"
 
 /** States in a thread's life cycle. */
 enum thread_status
@@ -89,10 +90,13 @@ struct thread
     uint8_t *stack;                     /**< Saved stack pointer. */
     int priority;                       /**< Priority. */
     int base_priority;                  /**< Base priority. */
+    int block_times;                    /**< Number of ticks the thread has been blocked. */ 
     struct list locks;                  /**< List of locks held by the thread. */
     struct lock *waiting_lock;          /**< Lock that the thread is waiting for. */
+    fixed_point recent_cpu;             /**< Recent CPU usage. */
+    int nice;                           /**< Nice value. */
     struct list_elem allelem;           /**< List element for all threads list. */
-
+      
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element. */
 
@@ -139,7 +143,12 @@ bool lock_priority_lesser(const struct list_elem *a, const struct list_elem *b, 
 bool thread_prior_lesser(const struct list_elem *a, const struct list_elem *b, void *aux);
 void thread_donate_priority (struct thread *t);
 void thread_update_priority (struct thread *t);
+void sleep_thread_check(struct thread *t, void *aux);
 
+
+void thread_mlfqs_increase_recent_cpu(void);
+void thread_mlfqs_update_load_avg(void);
+void thread_mlfqs_update_priority(struct thread *t);
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);

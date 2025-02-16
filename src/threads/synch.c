@@ -265,8 +265,8 @@ lock_release (struct lock *lock)
 
   //lock->holder = NULL;
   enum intr_level old_level = intr_disable();
-  list_remove(&lock->elem);
   if(!thread_mlfqs){
+    list_remove(&lock->elem);
     thread_update_priority(thread_current());
   }
   lock->holder = NULL;

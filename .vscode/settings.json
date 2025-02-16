@@ -2,6 +2,8 @@
     "files.associations": {
         "synch.h": "c",
         "thread.h": "c",
-        "interrupt.h": "c"
+        "interrupt.h": "c",
+        "list.h": "c",
+        "palloc.h": "c"
     }
 }

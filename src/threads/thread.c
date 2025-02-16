@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/point_cal.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -19,6 +20,8 @@
    Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
+
+
 
 /** List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
@@ -58,6 +61,8 @@ static unsigned thread_ticks;   /**< # of timer ticks since last yield. */
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
+fixed_point load_avg;
+
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -111,7 +116,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
-
+  load_avg=INT_TO_FP(0);
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -413,35 +418,124 @@ thread_update_priority(struct thread *t){
 }
 
 
+/**
+ * @brief Increases the recent CPU usage of the currently running thread by 1.
+ *
+ * This function is part of the multi-level feedback queue scheduler (MLFQS).
+ * It asserts that the MLFQS is enabled and that the function is called in an
+ * interrupt context. If the current thread is the idle thread, the function
+ * returns immediately without making any changes. Otherwise, it increments
+ * the recent CPU usage of the current thread by 1.
+ */
+void thread_mlfqs_increase_recent_cpu(void){
+  ASSERT(thread_mlfqs);
+  ASSERT(intr_context());
+  struct thread *t = thread_current();
+  if(t!=idle_thread){
+    t->recent_cpu =ADD_N(t->recent_cpu,1);
+  }
+}
+
+/**
+ * @brief Updates the system load average and recent CPU values for all threads.
+ *
+ * This function is part of the multi-level feedback queue scheduler (MLFQS)
+ * implementation. It updates the system load average based on the number of
+ * threads that are either running or ready to run, excluding the idle thread.
+ * It then iterates through all threads and updates their recent CPU values
+ * based on the new load average and their nice values. The priority of each
+ * thread is also recalculated.
+ *
+ * Preconditions:
+ * - The MLFQS scheduler must be enabled.
+ * - This function must be called in an interrupt context.
+ *
+ * The load average is calculated using the formula:
+ * load_avg = (59/60) * load_avg + (1/60) * ready_threads
+ *
+ * The recent CPU value for each thread is updated using the formula:
+ * recent_cpu = (2 * load_avg) / (2 * load_avg + 1) * recent_cpu + nice
+ *
+ * The priority of each thread is updated by calling thread_mlfqs_update_priority().
+ */
+void thread_mlfqs_update_load_avg(void){
+  ASSERT(thread_mlfqs);
+  ASSERT(intr_context());
+  int ready_threads = list_size(&ready_list);
+  if(thread_current()!=idle_thread){
+    ready_threads++;
+  }
+  load_avg = ADD(DIV_N(MUL_N(load_avg,59),60),DIV_N(INT_TO_FP(ready_threads),60));//load_avg = 59/60 * load_avg + 1/60 * ready_threads
+  struct thread *t;
+  struct list_elem *e=list_begin(&all_list);
+  for(; e!=list_end(&all_list); e = list_next(e)){
+    t = list_entry(e, struct thread, allelem);
+    if(t!=idle_thread){
+      t->recent_cpu = ADD_N(MUL(DIV(MUL_N(load_avg,2),ADD_N(MUL_N(load_avg,2),1)),t->recent_cpu),INT_TO_FP(t->nice));//recent_cpu = (2*load_avg)/(2*load_avg+1) * recent_cpu + nice
+      thread_mlfqs_update_priority(t);
+    }
+  }
+}
+
+void thread_mlfqs_update_priority(struct thread *t){
+  ASSERT(thread_mlfqs);
+  if(t == idle_thread){
+    return;
+  }
+  t->priority = FP_TO_INT_NEAREST(SUB_N(SUB(INT_TO_FP(PRI_MAX),DIV_N(t->recent_cpu,4)),2*t->nice));
+  t->priority = t->priority < PRI_MIN ? PRI_MIN : t->priority;
+  t->priority = t->priority > PRI_MAX ? PRI_MAX : t->priority;
+}
+
+
+/**
+ * @brief Checks if a thread should be unblocked based on its block time.
+ *
+ * This function decreases the block time of a thread if it is currently blocked.
+ * If the block time reaches zero, the thread is unblocked.
+ *
+ * @param t A pointer to the thread structure to be checked.
+ */
+void sleep_thread_check(struct thread *t, void *aux UNUSED){
+  if(t->block_times>0&&t->status==THREAD_BLOCKED){
+    t->block_times--;
+    if(t->block_times==0){
+      thread_unblock(t);
+    }
+  }
+}
+
+
+
 /** Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice UNUSED) 
 {
-  /* Not yet implemented. */
+  thread_current()->nice = nice;
+  thread_mlfqs_update_priority(thread_current());
+  thread_yield();
 }
 
 /** Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current()->nice;
 }
 
 /** Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  
+  return FP_TO_INT_NEAREST(MUL_N(load_avg,100));
 }
 
 /** Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return FP_TO_INT_NEAREST(MUL_N(thread_current()->recent_cpu,100));
 }
 
 /** Idle thread.  Executes when no other thread is ready to run.
@@ -531,8 +625,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->base_priority = priority;
   t->priority = priority;
+  t->block_times = 0;
   t->waiting_lock = NULL;
   t->magic = THREAD_MAGIC;
+  t->recent_cpu = INT_TO_FP(0);
+  t->nice = 0;
   list_init(&t->locks);
 
   old_level = intr_disable ();

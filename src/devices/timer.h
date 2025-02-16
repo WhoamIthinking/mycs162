@@ -13,7 +13,6 @@ void time_list_init(void);
 void timer_init (void);
 void timer_calibrate (void);
 
-bool sleep_thread_less(const struct list_elem *a, const struct list_elem *b, void *aux);
 int64_t timer_ticks (void);
 int64_t timer_elapsed (int64_t);
 
