@@ -5,7 +5,7 @@
 #include <stddef.h>
 
 typedef int fixed_point; // 定义定点数类型
-#define F 16             // 定义定点数的位数（直接用 14）
+#define F 14             // 定义定点数的位数（直接用 14）
 
 // 优化后的宏实现
 #define INT_TO_FP(n) ((n) << F)                              // 整数转定点数，左移 F 位
@@ -20,6 +20,6 @@ typedef int fixed_point; // 定义定点数类型
 #define MUL(x, y) ((fixed_point)(((int64_t)(x) * (y)) >> F))  // 两个定点数相乘，结果右移 F 位
 #define MUL_N(x, n) ((x) * (n))                               // 定点数乘整数
 #define DIV(x, y) ((fixed_point)(((int64_t)(x) << F) / (y)))  // 两个定点数相除，分子左移 F 位
-#define DIV_N(x, n) ((x) / (n))                               // 定点数除以整数
+#define DIV_N(x, n) (((x) + (n)/2) / (n))                               // 定点数除以整数
 
 #endif // POINT_CAL_H

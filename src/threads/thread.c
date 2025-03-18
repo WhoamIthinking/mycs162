@@ -462,16 +462,20 @@ void thread_mlfqs_update_load_avg(void){
   ASSERT(thread_mlfqs);
   ASSERT(intr_context());
   int ready_threads = list_size(&ready_list);
-  if(thread_current()!=idle_thread){
+  if(thread_current()!=idle_thread&&thread_current()->status==THREAD_RUNNING){
     ready_threads++;
   }
-  load_avg = ADD(DIV_N(MUL_N(load_avg,59),60),DIV_N(INT_TO_FP(ready_threads),60));//load_avg = 59/60 * load_avg + 1/60 * ready_threads
+  fixed_point term1 = load_avg - DIV_N(load_avg + 30, 60);  // 59/60*L（+30实现四舍五入）
+  fixed_point term2 = DIV_N(INT_TO_FP(ready_threads) + 30, 60);    // 1/60*active（四舍五入）
+  load_avg = term1 + term2;
+
+  //load_avg = ADD(SUB(load_avg,DIV(load_avg,INT_TO_FP(60))),DIV(INT_TO_FP(ready_threads),INT_TO_FP(60)));//load_avg = 59/60 * load_avg + 1/60 * ready_threads
   struct thread *t;
   struct list_elem *e=list_begin(&all_list);
   for(; e!=list_end(&all_list); e = list_next(e)){
     t = list_entry(e, struct thread, allelem);
     if(t!=idle_thread){
-      t->recent_cpu = ADD_N(MUL(DIV(MUL_N(load_avg,2),ADD_N(MUL_N(load_avg,2),1)),t->recent_cpu),INT_TO_FP(t->nice));//recent_cpu = (2*load_avg)/(2*load_avg+1) * recent_cpu + nice
+      t->recent_cpu = ADD(MUL(DIV(MUL_N(load_avg,2), ADD_N(MUL_N(load_avg,2),1)), t->recent_cpu), INT_TO_FP(t->nice));//recent_cpu = (2*load_avg)/(2*load_avg+1) * recent_cpu + nice
       thread_mlfqs_update_priority(t);
     }
   }
@@ -482,7 +486,7 @@ void thread_mlfqs_update_priority(struct thread *t){
   if(t == idle_thread){
     return;
   }
-  t->priority = FP_TO_INT_NEAREST(SUB_N(SUB(INT_TO_FP(PRI_MAX),DIV_N(t->recent_cpu,4)),2*t->nice));
+  t->priority = t->priority = FP_TO_INT_NEAREST(SUB(SUB(INT_TO_FP(PRI_MAX), DIV(t->recent_cpu, INT_TO_FP(4))), MUL(INT_TO_FP(t->nice), INT_TO_FP(2))));//priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
   t->priority = t->priority < PRI_MIN ? PRI_MIN : t->priority;
   t->priority = t->priority > PRI_MAX ? PRI_MAX : t->priority;
 }
