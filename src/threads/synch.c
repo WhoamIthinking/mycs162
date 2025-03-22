@@ -117,13 +117,17 @@ sema_up (struct semaphore *sema)
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
+  struct thread *unblocked = NULL;
   if (!list_empty (&sema->waiters)) {
     list_sort(&sema->waiters, (list_less_func*)&thread_prior_lesser, NULL);
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+    unblocked = list_entry (list_pop_front (&sema->waiters),
+                            struct thread, elem);
+    thread_unblock (unblocked);
   }
   sema->value++;
+  #ifndef USERPROG
   thread_yield();
+  #endif
   intr_set_level (old_level);
 }
 

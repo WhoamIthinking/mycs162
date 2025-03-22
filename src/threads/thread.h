@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/point_cal.h"
+#include "threads/synch.h"
 
 /** States in a thread's life cycle. */
 enum thread_status
@@ -88,6 +89,12 @@ struct thread
     enum thread_status status;          /**< Thread state. */
     char name[16];                      /**< Name (for debugging purposes). */
     uint8_t *stack;                     /**< Saved stack pointer. */
+    int exit_status;                    /**< Exit status of the thread. */
+    bool is_user_process;               /**< True if the thread is a user process. */
+    //bool is_alive;                      /**< True if the thread is alive. */
+    struct semaphore exit_sema;              /**< Semaphore for synchronization. */
+    struct list child_list;             /**< List of child processes. */
+    struct thread *parent;              /**< Parent process. */
     int priority;                       /**< Priority. */
     int base_priority;                  /**< Base priority. */
     int block_times;                    /**< Number of ticks the thread has been blocked. */ 
@@ -100,15 +107,22 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element. */
 
-#ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /**< Page directory. */
-#endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /**< Detects stack overflow. */
   };
 
+
+struct child_process
+{
+  tid_t tid;                          /**< Thread identifier. */
+  int exit_status;                    /**< Exit status of the thread. */
+  bool exited;                      /**< True if the thread is alive. */
+  struct semaphore exit_sema;              /**< Semaphore for synchronization. */
+  struct list_elem elem;              /**< List element for child list. */
+};
 /** If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
@@ -122,6 +136,7 @@ void thread_print_stats (void);
 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
+struct thread *thread_find(tid_t tid);
 
 void thread_block (void);
 void thread_unblock (struct thread *);
