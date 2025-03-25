@@ -91,8 +91,7 @@ struct thread
     uint8_t *stack;                     /**< Saved stack pointer. */
     int exit_status;                    /**< Exit status of the thread. */
     bool is_user_process;               /**< True if the thread is a user process. */
-    //bool is_alive;                      /**< True if the thread is alive. */
-    struct semaphore exit_sema;              /**< Semaphore for synchronization. */
+    struct lock child_lock;             /**< Lock for child list. */
     struct list child_list;             /**< List of child processes. */
     struct thread *parent;              /**< Parent process. */
     int priority;                       /**< Priority. */
@@ -114,7 +113,7 @@ struct thread
     unsigned magic;                     /**< Detects stack overflow. */
   };
 
-
+/** Child process structure. */
 struct child_process
 {
   tid_t tid;                          /**< Thread identifier. */

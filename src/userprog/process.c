@@ -13,13 +13,14 @@
 #include "filesys/filesys.h"
 #include "threads/flags.h"
 #include "threads/init.h"
+#include "threads/thread.h"
 #include "threads/interrupt.h"
 #include "threads/palloc.h"
-#include "threads/thread.h"
 #include "threads/vaddr.h"
 
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (const char *cmdline, void (**eip) (void), void **esp,char **argv, int argc);
+ 
 
 /** Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -38,33 +39,87 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  /* Parse the file name and arguments */
+  char *save_ptr;
+  char *token;
+  int argc=0;
+  char* argv[128];
+  token=strtok_r(fn_copy," ",&save_ptr);
+  while(token!=NULL&&argc<128){
+    argv[argc]=token;
+    argc++;
+    token=strtok_r(NULL," ",&save_ptr);
+  }
+  if(argc==0){
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
+  struct process_args *args = palloc_get_page(0);
+  if (args == NULL){
+    palloc_free_page(fn_copy);
+    return TID_ERROR;
+  }
+  args->program_name = argv[0];
+  args->argc = argc;
+  args->argv = argv;
+  args->fncopy = fn_copy;
+
+  struct thread *cur = thread_current();
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  tid = thread_create (args->program_name, PRI_DEFAULT, start_process, args);
+  struct thread *t = thread_find(tid);
+
+  struct child_process *cp = palloc_get_page(0);
+  if (cp == NULL){
+    PANIC("failed to allocate memory for child process\n");
+  }
+  cp->tid = t->tid;
+  cp->exit_status = -1;
+  cp->exited = false;
+  //printf("#########process_execute: Child TID: %d\n", cp->tid);  // 调试输出
+  sema_init(&cp->exit_sema, 0);
+
+   // Add to the parent's child list
+  lock_acquire(&cur->child_lock);
+  list_push_back(&cur->child_list, &cp->elem);
+  lock_release(&cur->child_lock);
+  t->parent = thread_current();
+  if (tid == TID_ERROR){
+    palloc_free_page(fn_copy);
+  } 
   return tid;
 }
+
 
 /** A thread function that loads a user process and starts it
    running. */
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  struct process_args *args = file_name_;
   struct intr_frame if_;
   bool success;
 
+  //printf("start_process: Program name: %s\n", args->program_name);  // 调试输出
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
-
+  success = load (args->program_name, &if_.eip, &if_.esp,args->argv,args->argc);
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
+  if (!success){
+    palloc_free_page(args->fncopy);
+    palloc_free_page(args);
     thread_exit ();
+  }
+  struct thread *cur = thread_current();
+  struct thread *parent = cur->parent;
+  //printf("#########start_process: Parent TID: %d\n", parent->tid);  // 调试输出
+  //printf("#########parent_name: %s\n", parent->name);  // 调试输出
+
+ 
+  cur->is_user_process = true;
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -86,9 +141,33 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
-{
-  return -1;
+process_wait (tid_t child_tid ) 
+{ 
+  struct thread *cur = thread_current();
+  struct list_elem *e;
+  //lock_acquire(&cur->child_lock);
+  //printf("process_wait: Parent child_list size: %d\n", list_size(&cur->child_list));  // 调试输出
+  for(e = list_begin(&cur->child_list); e != list_end(&cur->child_list); e = list_next(e)){
+    struct child_process *cp = list_entry(e, struct child_process, elem);
+    //printf("process_wait: Checking child TID: %d\n", cp->tid);  // 调试输出
+    //printf("the child tid is %d\n", child_tid);
+    if(cp->tid == child_tid){
+      if(cp->exited){// If the child has already exited
+        int status = cp->exit_status;
+        list_remove(e);// Remove from the child list
+        palloc_free_page(cp);
+        return status;
+      }else{
+        sema_down(&cp->exit_sema);// Wait for the child to exit
+        int status = cp->exit_status;
+        list_remove(e);
+        palloc_free_page(cp);
+        return status;
+      }
+    }
+  }
+  //lock_release(&cur->child_lock);
+  return -1;// If the child is not found
 }
 
 /** Free the current process's resources. */
@@ -98,9 +177,35 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  if(cur->is_user_process&&cur->exit_status!=-1){
+    printf("%s: exit(%d)\n",cur->name,cur->exit_status);
+  }// Print the exit status
+
+  if(cur->is_user_process&&cur->parent!=NULL){
+    struct list *child_list = &cur->parent->child_list;
+    
+    lock_acquire(&cur->parent->child_lock);
+    struct list_elem *e;
+    for (e = list_begin (child_list); e != list_end (child_list); e = list_next (e))
+    {
+      // Find the child process
+      struct child_process *cp = list_entry (e, struct child_process, elem);
+      //printf("process_exit: Checking child TID: %d\n", cp->tid);  // 调试输出
+      if (cp->tid == cur->tid)
+      {
+        cp->exited = true;
+        cp->exit_status = cur->exit_status;
+        sema_up(&cp->exit_sema);
+        break;
+      }
+    }
+    lock_release(&cur->parent->child_lock);
+  }
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
+  
   if (pd != NULL) 
     {
       /* Correct ordering here is crucial.  We must set
@@ -195,18 +300,19 @@ struct Elf32_Phdr
 #define PF_W 2          /**< Writable. */
 #define PF_R 4          /**< Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack (void **esp,char **argv, int argc);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
+
 
 /** Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+load (const char *file_name, void (**eip) (void), void **esp,char **argv, int argc) 
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
@@ -302,13 +408,15 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
+  if (!setup_stack (esp,argv,argc))
     goto done;
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
   success = true;
+  //printf("Loading user program: %s (eip=0x%08x, esp=0x%08x)\n", file_name, eip, esp);
+
 
  done:
   /* We arrive here whether the load is successful or not. */
@@ -424,25 +532,87 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
   return true;
 }
 
+
 /** Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-static bool
-setup_stack (void **esp) 
-{
-  uint8_t *kpage;
-  bool success = false;
-
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
-    }
-  return success;
-}
+   static bool
+   setup_stack (void **esp, char **argv, int argc) 
+   {
+     uint8_t *kpage;
+     bool success = false;
+     char **args_ptrs;  // 存储参数字符串地址的数组
+     int i;
+     size_t args_len = 0;
+   
+     // 计算所有参数字符串的总长度（包含终止符）
+     for (i = 0; i < argc; i++) {
+       args_len += strlen(argv[i]) + 1;
+     }
+   
+     // 分配用户栈页面
+     kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+     if (kpage == NULL) 
+       return false;
+   
+     // 将页面安装到用户虚拟地址空间顶部（PHYS_BASE - PGSIZE）
+     success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+     if (!success) {
+       palloc_free_page (kpage);
+       return false;
+     }
+   
+     // 初始化栈指针到页面顶部（PHYS_BASE）
+     *esp = (void *) PHYS_BASE;
+   
+     // 压入参数字符串（从右到左）
+     args_ptrs = (char **) palloc_get_page (0); // 临时存储参数字符串地址
+     if (args_ptrs == NULL) {
+       palloc_free_page (kpage);
+       return false;
+     }
+   
+     // 从最后一个参数开始压栈，并记录地址
+     for (i = argc - 1; i >= 0; i--) {
+       int len = strlen(argv[i]) + 1; // 包含 '\0'
+       *esp -= len;
+       //printf("len is %d\n", len);
+       //printf("copying %s to %p\n", argv[i], *esp);
+       memcpy(*esp, argv[i], len);    // 将参数字符串复制到栈中
+       args_ptrs[i] = (char *) *esp;  // 记录字符串地址
+       //printf("args_ptrs[%d] = %p\n", i, args_ptrs[i]);
+       //printf("args_ptrs[%d] = %s\n", i, args_ptrs[i]);
+     }
+   
+     // 在压入哨兵 NULL 前对齐到 4 字节边界
+      uintptr_t esp_addr = (uintptr_t)*esp;
+      esp_addr -= esp_addr % 4;  // 对齐到最近的4字节边界
+      *esp = (void *)esp_addr;
+     // 压入哨兵 NULL（argv[argc] = NULL）
+      *esp -= sizeof(char *);
+      *(char **)*esp = NULL;
+   
+     // 压入 argv[] 数组（从右到左）
+     for (i = argc - 1; i >= 0; i--) {
+       *esp -= sizeof(char *);
+       *(char **) *esp = args_ptrs[i];
+       //printf("pushing %s \n", args_ptrs[i]);
+      }
+      
+     // 压入 argv 的地址（即 argv[0] 的地址）
+     char **argv_ptr = (char **) *esp;
+     *esp -= sizeof(char **);
+     *(char ***) *esp = argv_ptr;
+   
+     // 压入 argc
+     *esp -= sizeof(int);
+     *(int *) *esp = argc;
+   
+     // 压入伪造的返回地址（0）
+     *esp -= sizeof(void *);
+     *(void **) *esp = 0;
+     palloc_free_page (args_ptrs); // 释放临时存储
+     return true;
+   }
 
 /** Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.

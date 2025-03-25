@@ -8,9 +8,13 @@
 int
 main (int argc, char *argv[]) 
 {
+  // 在用户程序的 main 函数起始处添加：
+  //asm volatile ("movl $0x12345678, %%eax; hlt" ::: "eax");  // 触发 QEMU 断点
+
   int i;
 
   test_name = "args";
+  //msg("#####################args.c#####################\n");
 
   msg ("begin");
   msg ("argc = %d", argc);

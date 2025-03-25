@@ -4,6 +4,8 @@
         "thread.h": "c",
         "interrupt.h": "c",
         "list.h": "c",
-        "palloc.h": "c"
+        "palloc.h": "c",
+        "syscall.h": "c",
+        "stdio.h": "c"
     }
 }

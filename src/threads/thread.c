@@ -295,6 +295,18 @@ thread_current (void)
   return t;
 }
 
+/*Find the thread with the given tid*/
+struct thread *thread_find(tid_t tid){
+  struct list_elem *e;
+  for(e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)){
+    struct thread *t = list_entry(e, struct thread, allelem);
+    if(t->tid == tid){
+      return t;
+    }
+  }
+  return NULL;
+}
+
 /** Returns the running thread's tid. */
 tid_t
 thread_tid (void) 
@@ -630,10 +642,13 @@ init_thread (struct thread *t, const char *name, int priority)
   t->base_priority = priority;
   t->priority = priority;
   t->block_times = 0;
+  t->exit_status = -1;
   t->waiting_lock = NULL;
   t->magic = THREAD_MAGIC;
   t->recent_cpu = INT_TO_FP(0);
   t->nice = 0;
+  list_init(&t->child_list);
+  lock_init(&t->child_lock);//initialize the lock for child list
   list_init(&t->locks);
 
   old_level = intr_disable ();
