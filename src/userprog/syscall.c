@@ -42,8 +42,16 @@ syscall_handler (struct intr_frame *f)
         sys_exit(-1);
   }
   int *stack = (int*)f->esp;
+ 
+  // 逐字节读取并验证地址
+  for (int i = 0; i < sizeof(uint32_t); i++) {
+    if (!is_user_vaddr(stack + i) || 
+        pagedir_get_page(thread_current()->pagedir,stack + i) == NULL) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+    }
+  }
   int syscall_num = stack[0];
-
   switch(syscall_num){
     case SYS_HALT:
       sys_halt();
