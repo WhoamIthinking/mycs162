@@ -1,6 +1,7 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "filesys/directory.h"
 #include "threads/interrupt.h"
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
@@ -9,6 +10,8 @@
 
 static void syscall_handler (struct intr_frame *);
 static bool get_user(const uint8_t *src, uint8_t *dst);
+bool validate_string(const char *str);
+bool validate_arguments(struct intr_frame *f, int arg_count);
 
 
 void
@@ -62,12 +65,16 @@ syscall_handler (struct intr_frame *f)
     case SYS_WRITE:
       sys_write(f);
       break;
+    case SYS_CREATE:
+      if (!validate_arguments(f, 2)) {  // 检查参数数量
+        sys_exit(-1);
+      }
+      f->eax = sys_create((const char *)stack[1], (unsigned)stack[2]);
+      break;
     default:
       printf("Unknown system call: %d\n", syscall_num);
       thread_exit();
   }
-  
-  //thread_exit ();
 }
 
 
@@ -141,4 +148,46 @@ void sys_write(struct intr_frame *f){
   putbuf(k_buf, size);
   palloc_free_page(k_buf);
   f->eax = size;
+}
+
+bool sys_create(const char *name, unsigned initial_size){
+  if(validate_string(name)==false){
+    sys_exit(-1);
+    return false;
+  }
+  return filesys_create(name, initial_size);
+}
+
+
+bool validate_arguments(struct intr_frame *f, int arg_count) {
+  uint32_t *args = (uint32_t *)f->esp;
+  for (int i = 0; i <= arg_count; i++) {  // 包括系统调用号
+      if (!is_user_vaddr(&args[i]) || 
+          pagedir_get_page(thread_current()->pagedir, &args[i]) == NULL) {
+          return false;
+      }
+  }
+  return true;
+}
+
+
+
+
+// userprog/syscall.c → validate_string()
+bool validate_string(const char *str) {
+  if (str == NULL) {
+      return false;  // 空指针直接拒绝
+  }
+  if(*str=='\0'){
+    return false;
+  }
+  for (const char *p = str; ; p++) {
+      if (!is_user_vaddr(p) || 
+          pagedir_get_page(thread_current()->pagedir, p) == NULL) {
+          return false;  // 地址无效或未映射
+      }
+      if (*p == '\0') {
+          return true;   // 合法字符串以 '\0' 结尾
+      }
+  }
 }
