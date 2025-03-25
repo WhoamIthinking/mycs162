@@ -36,8 +36,11 @@ static bool get_user(const uint8_t *src, uint8_t *dst) {
 static void
 syscall_handler (struct intr_frame *f) 
 { 
-  //printf ("system call!\n");
-  //printf("System call number eax: %d\n", f->eax);
+  if (!is_user_vaddr(f->esp) || 
+        pagedir_get_page(thread_current()->pagedir, f->esp) == NULL) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+  }
   int *stack = (int*)f->esp;
   int syscall_num = stack[0];
 

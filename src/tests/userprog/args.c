@@ -14,7 +14,6 @@ main (int argc, char *argv[])
   int i;
 
   test_name = "args";
-  //msg("#####################args.c#####################\n");
 
   msg ("begin");
   msg ("argc = %d", argc);

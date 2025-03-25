@@ -177,10 +177,9 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  if(cur->is_user_process&&cur->exit_status!=-1){
+  if(cur->is_user_process){
     printf("%s: exit(%d)\n",cur->name,cur->exit_status);
   }// Print the exit status
-
   if(cur->is_user_process&&cur->parent!=NULL){
     struct list *child_list = &cur->parent->child_list;
     
