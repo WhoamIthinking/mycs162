@@ -9,12 +9,14 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "devices/shutdown.h" // 确保包含头文件
+#include "userprog/process.h"
 
 static void syscall_handler (struct intr_frame *);
 static bool get_user(const uint8_t *src, uint8_t *dst);
 bool validate_string(const char *str);
 bool validate_arguments(struct intr_frame *f, int arg_count);
 bool validate_buffer(void *addr, unsigned size);
+int parse_cmdline(const char *cmd_line, char **argv, int max_args);
 
 
 void
@@ -113,58 +115,27 @@ syscall_handler (struct intr_frame *f)
       }
       f->eax = sys_filesize(stack[1]);
       break;
+    case SYS_EXEC:
+      if (!validate_arguments(f, 1)) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+      }
+  
+      const char *cmd_line = (const char *)stack[1];
+      char kernel_cmd[1024];
+  
+      /* 严格验证命令行参数 */
+      if (!validate_string(cmd_line) || 
+          strlen(cmd_line) >= sizeof(kernel_cmd)) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+      }
+      f->eax = sys_exec(kernel_cmd);
+      break;
     default:
       printf("Unknown system call: %d\n", syscall_num);
       thread_exit();
   }
-}
-
-
-void sys_halt(void){
-  printf("Shutting down...\n");
-  shutdown_power_off();
-}
-
-void sys_exit(int status){
-  struct thread *cur = thread_current();
-  cur->exit_status = status;
-  thread_exit();
-}
-
-/* 实现sys_write函数 */
-int sys_write(int fd, const void *buffer, unsigned size) {
-  struct thread *t = thread_current();
-  
-  /* 1. 验证文件描述符 */
-  if (fd < 0 || fd >= MAX_FILE) return -1;
-  
-  /* 2. 处理标准输出/错误 */
-  if (fd == STDOUT_FILENO) {
-      putbuf(buffer, size);
-      return size;
-  }
-  
-  /* 3. 验证普通文件描述符 */
-  struct file *file = t->file_list[fd];
-  if (file == NULL || fd == STDIN_FILENO) return -1;
-  
-  /* 4. 0字节特殊处理 */
-  if (size == 0) return 0;
-  
-  int bytes_written = file_write_at(file, buffer, size, file_tell(file));
-  if (bytes_written > 0)
-      file_seek(file, file_tell(file) + bytes_written);
-  return bytes_written;
-}
-
-
-
-bool sys_create(const char *name, unsigned initial_size){
-  if(validate_string(name)==false){
-    sys_exit(-1);
-    return false;
-  }
-  return filesys_create(name, initial_size);
 }
 
 
@@ -213,6 +184,54 @@ bool validate_buffer(void *addr, unsigned size) {
   return true;
 }
 
+
+
+void sys_halt(void){
+  printf("Shutting down...\n");
+  shutdown_power_off();
+}
+
+void sys_exit(int status){
+  struct thread *cur = thread_current();
+  cur->exit_status = status;
+  thread_exit();
+}
+
+/* 实现sys_write函数 */
+int sys_write(int fd, const void *buffer, unsigned size) {
+  struct thread *t = thread_current();
+  
+  /* 1. 验证文件描述符 */
+  if (fd < 0 || fd >= MAX_FILE) return -1;
+  
+  /* 2. 处理标准输出/错误 */
+  if (fd == STDOUT_FILENO) {
+      putbuf(buffer, size);
+      return size;
+  }
+  
+  /* 3. 验证普通文件描述符 */
+  struct file *file = t->file_list[fd];
+  if (file == NULL || fd == STDIN_FILENO) return -1;
+  
+  /* 4. 0字节特殊处理 */
+  if (size == 0) return 0;
+  
+  int bytes_written = file_write_at(file, buffer, size, file_tell(file));
+  if (bytes_written > 0)
+      file_seek(file, file_tell(file) + bytes_written);
+  return bytes_written;
+}
+
+
+
+bool sys_create(const char *name, unsigned initial_size){
+  if(validate_string(name)==false){
+    sys_exit(-1);
+    return false;
+  }
+  return filesys_create(name, initial_size);
+}
 
 
 int sys_open(const char *name){
@@ -307,4 +326,44 @@ int sys_filesize(int fd) {
   lock_release(&thread_current()->file_lock);
   
   return size;
+}
+
+/* 实现sys_exec函数 */
+int sys_exec(const char *cmd_line) {
+  /* 参数解析 */
+  char *argv[64];
+  int argc = parse_cmdline(cmd_line, argv, 64);
+  if (argc == 0) return -1;
+
+  /* 尝试加载可执行文件 */
+  struct file *file = filesys_open(argv[0]);
+  if (!file) return -1;
+  
+  /* 创建子进程 */
+  tid_t pid = process_execute(cmd_line);
+  if (pid == TID_ERROR) return -1;
+  file_close(file);
+  
+  return pid;
+}
+
+/* 命令行参数解析函数 */
+int parse_cmdline(const char *cmd_line, char **argv, int max_args) {
+  int argc = 0;
+  bool in_arg = false;
+
+  // Create a writable copy of cmd_line
+  char cmd_copy[1024];
+  strlcpy(cmd_copy, cmd_line, sizeof(cmd_copy));
+  
+  for (char *p = cmd_copy; *p && argc < max_args; p++) {
+      if (*p == ' ' && in_arg) {
+          in_arg = false;
+          *p = '\0';
+      } else if (*p != ' ' && !in_arg) {
+          argv[argc++] = p;
+          in_arg = true;
+      }
+  }
+  return argc;
 }

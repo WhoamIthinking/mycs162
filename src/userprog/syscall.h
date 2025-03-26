@@ -12,4 +12,5 @@ int sys_open(const char *name);
 int sys_close(int fd);
 int sys_read(int fd, void *buffer, unsigned size);
 int sys_filesize(int fd);
+int sys_exec(const char *cmd_line);
 #endif /**< userprog/syscall.h */
