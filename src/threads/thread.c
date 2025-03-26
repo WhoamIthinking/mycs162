@@ -651,12 +651,15 @@ init_thread (struct thread *t, const char *name, int priority)
   t->exit_status = -1;
   t->is_user_process = false;
   t->next_fd=2;
+  t->file_list[STDIN_FILENO] = (struct file *)0x1234;  // 标记为已打开
+  t->file_list[STDOUT_FILENO] = (struct file *)0x5678;
   memset(t->file_list, 0, sizeof(t->file_list));
   t->waiting_lock = NULL;
   t->magic = THREAD_MAGIC;
   t->recent_cpu = INT_TO_FP(0);
   t->nice = 0;
   list_init(&t->child_list);
+  lock_init(&t->file_lock);//initialize the lock for file list
   lock_init(&t->child_lock);//initialize the lock for child list
   list_init(&t->locks);
 

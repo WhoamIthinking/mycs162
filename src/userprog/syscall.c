@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include "filesys/filesys.h"
+#include "filesys/file.h"
+#include "devices/input.h"
 #include "threads/interrupt.h"
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
@@ -12,6 +14,7 @@ static void syscall_handler (struct intr_frame *);
 static bool get_user(const uint8_t *src, uint8_t *dst);
 bool validate_string(const char *str);
 bool validate_arguments(struct intr_frame *f, int arg_count);
+bool validate_buffer(void *addr, unsigned size);
 
 
 void
@@ -77,11 +80,23 @@ syscall_handler (struct intr_frame *f)
       }
       f->eax = sys_open((const char *)stack[1]);
       break;
+    case SYS_READ:
+      if (!validate_arguments(f, 3)) {  // 检查参数数量
+        sys_exit(-1);
+      }
+      f->eax = sys_read(stack[1], (void *)stack[2], (unsigned)stack[3]);
+      break;
     case SYS_CLOSE:
       if (!validate_arguments(f, 1)) {  // 检查参数数量
         sys_exit(-1);
       }
       f->eax = sys_close(stack[1]);
+      break;
+    case SYS_FILESIZE:
+      if (!validate_arguments(f, 1)) {  // 检查参数数量
+        sys_exit(-1);
+      }
+      f->eax = sys_filesize(stack[1]);
       break;
     default:
       printf("Unknown system call: %d\n", syscall_num);
@@ -198,6 +213,26 @@ bool validate_string(const char *str) {
   }
 }
 
+// 新增缓冲区验证辅助函数
+bool validate_buffer(void *addr, unsigned size) {
+  uint8_t *start = (uint8_t *)addr;
+  uint8_t *end = start + size;
+  
+  // 处理地址环绕的情况
+  if (end < start) return false;
+  
+  for (uint8_t *p = start; p < end; p++) {
+    if (!is_user_vaddr(p)) return false;
+    
+    // 检查物理页存在性
+    void *phys_page = pagedir_get_page(thread_current()->pagedir, pg_round_down(p));
+    if (!phys_page) return false;
+  }
+  return true;
+}
+
+
+
 int sys_open(const char *name){
   if(validate_string(name)==false){
     sys_exit(-1);
@@ -232,4 +267,62 @@ int sys_close(int fd){
   thread_current()->file_list[fd] = NULL;
   file_close(file);
   return 0;
+}
+
+// 实现sys_read函数（需要与文件系统配合）
+int sys_read(int fd, void *buffer, unsigned size) {
+  struct thread *t = thread_current();
+  
+  /* 1. 验证文件描述符 */
+  if (fd < 0 || fd >= MAX_FILE || 
+      (fd == STDOUT_FILENO ) ||  // 不能读stdout
+      t->file_list[fd] == NULL) {
+      return -1;
+  }
+
+  /* 2. 处理特殊0字节读请求 */
+  if (size == 0) {
+      return 0;
+  }
+
+  if(fd==STDIN_FILENO){
+    uint8_t *buf = (uint8_t *)buffer;
+    for(unsigned i=0;i<size;i++){
+      buf[i]=input_getc();
+    }
+    return size;
+  }
+  /* 3. 验证缓冲区有效性（需要逐页检查） */
+  if (!validate_buffer(buffer, size)) {  // true表示需要可写权限
+      sys_exit(-1);
+  }
+
+  /* 3. 执行读取操作 */
+  struct file *file = t->file_list[fd];
+  off_t offset = file_tell(file);
+  
+  lock_acquire(&t->file_lock);
+  int bytes_read = file_read_at(file, buffer, size, offset);
+  if (bytes_read > 0)
+      file_seek(file, offset + bytes_read);
+  lock_release(&t->file_lock);
+
+  return bytes_read;
+}
+
+int sys_filesize(int fd) {
+  struct thread *t = thread_current();
+  
+  /* 验证文件描述符有效性 */
+  if (fd < 0 || fd >= MAX_FILE || 
+      t->file_list[fd] == NULL) {
+      return -1;
+  }
+  
+  /* 获取文件长度 */
+  lock_acquire(&thread_current()->file_lock);
+  int size = file_length(t->file_list[fd]);
+  lock_release(&thread_current()->file_lock);
+  
+  return size;
 }
