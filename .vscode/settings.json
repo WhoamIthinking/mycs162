@@ -6,6 +6,9 @@
         "list.h": "c",
         "palloc.h": "c",
         "syscall.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "directory.h": "c",
+        "file.h": "c",
+        "vaddr.h": "c"
     }
 }

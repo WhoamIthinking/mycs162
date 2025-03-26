@@ -97,6 +97,8 @@ struct thread
     int priority;                       /**< Priority. */
     int base_priority;                  /**< Base priority. */
     int block_times;                    /**< Number of ticks the thread has been blocked. */ 
+    int next_fd;                        /**< Next file descriptor. */
+    struct file *file_list[128];        /**< List of files opened by the thread. */
     struct list locks;                  /**< List of locks held by the thread. */
     struct lock *waiting_lock;          /**< Lock that the thread is waiting for. */
     fixed_point recent_cpu;             /**< Recent CPU usage. */

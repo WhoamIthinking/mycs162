@@ -643,6 +643,9 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->block_times = 0;
   t->exit_status = -1;
+  t->is_user_process = false;
+  t->next_fd=2;
+  memset(t->file_list, 0, sizeof(t->file_list));
   t->waiting_lock = NULL;
   t->magic = THREAD_MAGIC;
   t->recent_cpu = INT_TO_FP(0);

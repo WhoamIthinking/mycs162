@@ -1,7 +1,7 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
-#include "filesys/directory.h"
+#include "filesys/filesys.h"
 #include "threads/interrupt.h"
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
@@ -70,6 +70,12 @@ syscall_handler (struct intr_frame *f)
         sys_exit(-1);
       }
       f->eax = sys_create((const char *)stack[1], (unsigned)stack[2]);
+      break;
+    case SYS_OPEN:
+      if (!validate_arguments(f, 1)) {  // 检查参数数量
+        sys_exit(-1);
+      }
+      f->eax = sys_open((const char *)stack[1]);
       break;
     default:
       printf("Unknown system call: %d\n", syscall_num);
@@ -170,16 +176,10 @@ bool validate_arguments(struct intr_frame *f, int arg_count) {
   return true;
 }
 
-
-
-
 // userprog/syscall.c → validate_string()
 bool validate_string(const char *str) {
   if (str == NULL) {
       return false;  // 空指针直接拒绝
-  }
-  if(*str=='\0'){
-    return false;
   }
   for (const char *p = str; ; p++) {
       if (!is_user_vaddr(p) || 
@@ -190,4 +190,19 @@ bool validate_string(const char *str) {
           return true;   // 合法字符串以 '\0' 结尾
       }
   }
+}
+
+int sys_open(const char *name){
+  if(validate_string(name)==false){
+    sys_exit(-1);
+    return -1;
+  }
+  struct file *file = filesys_open(name);
+  if(file==NULL){
+    return -1;
+  }
+  int fd = thread_current()->next_fd;
+  thread_current()->next_fd++;
+  thread_current()->file_list[fd] = file;
+  return fd;
 }
