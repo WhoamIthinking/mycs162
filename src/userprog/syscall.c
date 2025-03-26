@@ -66,7 +66,22 @@ syscall_handler (struct intr_frame *f)
       sys_exit(stack[1]);
       break;
     case SYS_WRITE:
-      sys_write(f);
+      if (!validate_arguments(f, 3)) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+      }
+      int fd = (int)stack[1];
+      const void *buffer = (const void *)stack[2];
+      unsigned size = (unsigned)stack[3];
+  
+      /* 增强型缓冲区验证 */
+      if (size > 0 && 
+        !validate_buffer((void *)buffer, size)) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+      }
+  
+      f->eax = sys_write(fd, buffer, size);
       break;
     case SYS_CREATE:
       if (!validate_arguments(f, 2)) {  // 检查参数数量
@@ -116,66 +131,33 @@ void sys_exit(int status){
   thread_exit();
 }
 
-void sys_write(struct intr_frame *f){
-  int fd;
-  const char *buf;
-  size_t size;
-
-  // 从栈中取出参数
-  uint32_t *esp=f->esp;
-  // 直接读取内核栈上的参数
-  fd = esp[1];         // f->esp + 4
-  buf = (const char *)esp[2];  // f->esp + 8
-  size = esp[3];    // f->esp + 12
-  //仅仅处理标准输出
-  if(fd!=1){
-    printf("fd is not 1\n");
-    f->eax=-1;
-    return;
+/* 实现sys_write函数 */
+int sys_write(int fd, const void *buffer, unsigned size) {
+  struct thread *t = thread_current();
+  
+  /* 1. 验证文件描述符 */
+  if (fd < 0 || fd >= MAX_FILE) return -1;
+  
+  /* 2. 处理标准输出/错误 */
+  if (fd == STDOUT_FILENO) {
+      putbuf(buffer, size);
+      return size;
   }
-  //检查buf是否合法
-  if(buf==NULL||!is_user_vaddr(buf)||!is_user_vaddr(buf+size)){
-    if(!is_user_vaddr(buf)){
-      printf("buf is not in user space\n");
-    }
-    else if(!is_user_vaddr(buf+size)){
-      printf("buf+size is not in user space\n");
-    }
-    else{
-      printf("buf is NULL\n");
-    }
-    f->eax=-1;
-    return;
-  }
-  //检查buf是否在用户内存空间
-  void *page_start = pg_round_down(buf);
-  void *page_end = pg_round_down(buf + size - 1);
-  for(void *page = page_start; page <= page_end; page += PGSIZE){
-    if(pagedir_get_page(thread_current()->pagedir, page) == NULL){
-      f->eax = -1;
-      return;
-    }
-  }
-  // 写入数据
-  char *k_buf = palloc_get_page(0);
-  if (k_buf == NULL) {
-    f->eax = -1;
-    return;
-  }
-  for(size_t i = 0; i < size; i++){
-    uint8_t byte;
-    if(!get_user((uint32_t *)(buf + i), &byte)){
-      f->eax = -1;
-      palloc_free_page(k_buf);
-      return;
-    }
-    k_buf[i] = byte;
-  }
-  //printf("sys_write: fd=%d, buf=%p, size=%d\n", fd, buf, size);
-  putbuf(k_buf, size);
-  palloc_free_page(k_buf);
-  f->eax = size;
+  
+  /* 3. 验证普通文件描述符 */
+  struct file *file = t->file_list[fd];
+  if (file == NULL || fd == STDIN_FILENO) return -1;
+  
+  /* 4. 0字节特殊处理 */
+  if (size == 0) return 0;
+  
+  int bytes_written = file_write_at(file, buffer, size, file_tell(file));
+  if (bytes_written > 0)
+      file_seek(file, file_tell(file) + bytes_written);
+  return bytes_written;
 }
+
+
 
 bool sys_create(const char *name, unsigned initial_size){
   if(validate_string(name)==false){
