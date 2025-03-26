@@ -10,6 +10,7 @@
         "directory.h": "c",
         "file.h": "c",
         "vaddr.h": "c",
-        "shutdown.h": "c"
+        "shutdown.h": "c",
+        "filesys.h": "c"
     }
 }

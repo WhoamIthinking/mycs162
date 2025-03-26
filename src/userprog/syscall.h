@@ -2,6 +2,7 @@
 #define USERPROG_SYSCALL_H
 
 #include "threads/interrupt.h"
+#include "threads/thread.h"
 
 void syscall_init (void);
 void sys_halt (void);
@@ -13,4 +14,5 @@ int sys_close(int fd);
 int sys_read(int fd, void *buffer, unsigned size);
 int sys_filesize(int fd);
 int sys_exec(const char *cmd_line);
+int sys_wait(tid_t pid);
 #endif /**< userprog/syscall.h */

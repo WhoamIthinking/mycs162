@@ -64,9 +64,11 @@ syscall_handler (struct intr_frame *f)
     case SYS_HALT:
       sys_halt();
       break;
+
     case SYS_EXIT:
       sys_exit(stack[1]);
       break;
+
     case SYS_WRITE:
       if (!validate_arguments(f, 3)) {
         thread_current()->exit_status = -1;
@@ -85,18 +87,21 @@ syscall_handler (struct intr_frame *f)
   
       f->eax = sys_write(fd, buffer, size);
       break;
+
     case SYS_CREATE:
       if (!validate_arguments(f, 2)) {  // 检查参数数量
         sys_exit(-1);
       }
       f->eax = sys_create((const char *)stack[1], (unsigned)stack[2]);
       break;
+
     case SYS_OPEN:
       if (!validate_arguments(f, 1)) {  // 检查参数数量
         sys_exit(-1);
       }
       f->eax = sys_open((const char *)stack[1]);
       break;
+
     case SYS_READ:
       if (!validate_arguments(f, 3)) {  // 检查参数数量
         sys_exit(-1);
@@ -109,12 +114,14 @@ syscall_handler (struct intr_frame *f)
       }
       f->eax = sys_close(stack[1]);
       break;
+
     case SYS_FILESIZE:
       if (!validate_arguments(f, 1)) {  // 检查参数数量
         sys_exit(-1);
       }
       f->eax = sys_filesize(stack[1]);
       break;
+
     case SYS_EXEC:
       if (!validate_arguments(f, 1)) {
         thread_current()->exit_status = -1;
@@ -132,6 +139,16 @@ syscall_handler (struct intr_frame *f)
       }
       f->eax = sys_exec(kernel_cmd);
       break;
+
+    case SYS_WAIT:
+      if (!validate_arguments(f, 1)) {
+        thread_current()->exit_status = -1;
+        sys_exit(-1);
+      }
+      tid_t pid = (tid_t)stack[1];
+      f->eax = sys_wait(pid);
+      break;
+
     default:
       printf("Unknown system call: %d\n", syscall_num);
       thread_exit();
@@ -366,4 +383,40 @@ int parse_cmdline(const char *cmd_line, char **argv, int max_args) {
       }
   }
   return argc;
+}
+
+/* 实现sys_wait函数 */
+int sys_wait(tid_t pid) {
+  struct thread *cur = thread_current();
+  struct child_process *cs = NULL;
+
+  /* 遍历子进程列表查找匹配PID */
+  struct list_elem *e;
+  for (e = list_begin(&cur->child_list); 
+       e != list_end(&cur->child_list); 
+       e = list_next(e)) 
+  {
+      struct child_process *tmp = list_entry(e, struct child_process, elem);
+      if (tmp->tid == pid) {
+          cs = tmp;
+          break;
+      }
+  }
+
+  /* 验证PID有效性 */
+  if (!cs || cs->exited) 
+      return -1;
+
+  /* 等待子进程退出 */
+  sema_down(&cs->exit_sema);
+
+  /* 获取退出状态并标记为已等待 */
+  int exit_code = cs->exit_status;
+  cs->exited = true;
+  
+  /* 从列表中移除（可选） */
+  list_remove(&cs->elem);
+  free(cs);
+
+  return exit_code;
 }
