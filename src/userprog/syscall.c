@@ -77,6 +77,12 @@ syscall_handler (struct intr_frame *f)
       }
       f->eax = sys_open((const char *)stack[1]);
       break;
+    case SYS_CLOSE:
+      if (!validate_arguments(f, 1)) {  // 检查参数数量
+        sys_exit(-1);
+      }
+      f->eax = sys_close(stack[1]);
+      break;
     default:
       printf("Unknown system call: %d\n", syscall_num);
       thread_exit();
@@ -202,7 +208,28 @@ int sys_open(const char *name){
     return -1;
   }
   int fd = thread_current()->next_fd;
+  if(fd>=MAX_FILE){
+    file_close(file);
+    return -1;
+  }
   thread_current()->next_fd++;
   thread_current()->file_list[fd] = file;
   return fd;
+}
+
+int sys_close(int fd){
+  /* 严格验证文件描述符范围：
+     * 1. 必须 >= 0（基础类型检查）
+     * 2. 不能是标准输入输出（0/1）
+     * 3. 不能超过最大文件描述符限制 */
+  if(fd<2||fd>=thread_current()->next_fd){
+    return -1;
+  }
+  struct file *file = thread_current()->file_list[fd];
+  if(file==NULL){
+    return -1;
+  }
+  thread_current()->file_list[fd] = NULL;
+  file_close(file);
+  return 0;
 }

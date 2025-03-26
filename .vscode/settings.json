@@ -9,6 +9,7 @@
         "stdio.h": "c",
         "directory.h": "c",
         "file.h": "c",
-        "vaddr.h": "c"
+        "vaddr.h": "c",
+        "shutdown.h": "c"
     }
 }

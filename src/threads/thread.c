@@ -320,7 +320,13 @@ void
 thread_exit (void) 
 {
   ASSERT (!intr_context ());
-
+  struct thread *cur = thread_current();
+  for (int fd = 2; fd < MAX_FILE; fd++) {
+    if (cur->file_list[fd]) {
+        file_close(cur->file_list[fd]);
+        cur->file_list[fd] = NULL;
+    }
+  }
 #ifdef USERPROG
   process_exit ();
 #endif

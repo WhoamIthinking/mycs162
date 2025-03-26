@@ -26,6 +26,9 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
 
+/** Maximum number of files a process can open. */
+#define MAX_FILE 128
+
 /** A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -98,7 +101,7 @@ struct thread
     int base_priority;                  /**< Base priority. */
     int block_times;                    /**< Number of ticks the thread has been blocked. */ 
     int next_fd;                        /**< Next file descriptor. */
-    struct file *file_list[128];        /**< List of files opened by the thread. */
+    struct file *file_list[MAX_FILE];        /**< List of files opened by the thread. */
     struct list locks;                  /**< List of locks held by the thread. */
     struct lock *waiting_lock;          /**< Lock that the thread is waiting for. */
     fixed_point recent_cpu;             /**< Recent CPU usage. */
